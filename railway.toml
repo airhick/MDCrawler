@@ -1,0 +1,14 @@
+[build]
+# Use Nixpacks (default) to build the Python app
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python app.py"
+restartPolicyType = "ON_FAILURE"
+healthcheckPath = "/"
+healthcheckTimeout = 120
+
+[variables]
+PYTHONDONTWRITEBYTECODE = "1"
+PYTHONUNBUFFERED = "1"
+
