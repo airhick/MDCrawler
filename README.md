@@ -1,15 +1,29 @@
-# Advanced Crawler Webhook v2.0
+# Voice AI Optimized Crawler v2.1
 
-Service FastAPI exposant un webhook `/crawl` qui prend une URL, explore en largeur (depth réglable), et renvoie un contenu structuré et nettoyé en Markdown avec métadonnées enrichies, optimisé pour les LLM et l'analyse de données.
+Service FastAPI exposant un webhook `/crawl` qui prend une URL, explore en largeur (depth réglable), et renvoie un contenu ultra-simplifié et nettoyé en Markdown, optimisé pour la lecture par Voice AI.
 
-## Nouveautés v2.0 🚀
+## Version 2.1 - Voice AI Optimized 🎙️
 
-### Structure Globale
-- ✅ YAML front-matter par page (url, crawled_at, page_type, lang, content_hash)
-- ✅ Hiérarchie de titres normalisée (H1 > H2 > H3 cohérente)
-- ✅ Déduplication automatique des blocs de contenu répétés
-- ✅ Ancres automatiques sur tous les titres
-- ✅ Filtrage des titres marketing vides ("À LA UNE", "NOS SERVICES", etc.)
+**Conçu pour les agents vocaux** qui lisent le contenu à haute voix et l'utilisent comme contexte pour comprendre une entreprise.
+
+### Optimisations Voice AI
+
+**✅ Supprimé (bruit pour la voix)**:
+- ❌ En-têtes de rapport statistiques
+- ❌ Blocs YAML front-matter
+- ❌ Marqueurs de pages (PAGE 1, PAGE 2)
+- ❌ Ancres HTML `<a id="...">`
+- ❌ Liens Markdown complexes
+- ❌ Menus de navigation répétés
+- ❌ Titres marketing vides
+
+**✅ Format simplifié**:
+- ✅ Contact info en texte simple: `Téléphone: +41 79 136 36 38`
+- ✅ Email simple: `Email: contact@example.com`
+- ✅ Adresse simple: `Adresse: Route des Jeunes 4, 1227 Les Acacias`
+- ✅ Horaires en liste claire
+- ✅ Séparateurs simples (`---`) entre pages
+- ✅ Déduplication automatique par hash de contenu
 
 ### Données Structurées
 - ✅ Détection automatique du type de page (home, store, product, category, service, faq, contact, about)
@@ -131,58 +145,51 @@ Réponse: `text/markdown`.
 - `sitemap_url` (str|null): URL sitemap explicite (sinon robots.txt + /sitemap.xml).
 - `sitemap_max_urls` (int): limite d'URLs importées depuis les sitemaps.
 
-## Format de Sortie
+## Format de Sortie Voice AI
 
-Chaque page crawlée inclut:
+Format ultra-simple pour lecture vocale:
 
 ```markdown
-================================================================================
-PAGE 1
-================================================================================
+# ERZA Déménagement Genève – Experts du déménagement
 
-​```yaml
----
-url: https://example.com/page
-canonical_url: https://example.com/canonical
-crawled_at: 2025-10-15T12:34:56Z
-page_type: store
-lang: fr
-content_hash: abc123def456...
----
-​```
+URL: https://erza.ch/
 
-## Titre de la Page
+Chez ERZA Déménagement, nous accompagnons particuliers et professionnels dans toutes les étapes de leur déménagement à Genève et alentours.
 
-**URL**: [https://example.com/page](https://example.com/page)
+Email: info@erza.ch
 
-**Description**: Description meta de la page
+Téléphone: +41 79 136 36 38
 
-### Contact Information
+Adresse: Rte des Jeunes 4 Bis, 1227 Les Acacias
 
-**Email**:
-- [contact@example.com](mailto:contact@example.com)
+Horaires:
+- Lundi: Fermé
+- Mardi: 09:00-12:30, 13:30-18:30
+- Mercredi: 09:00-12:30, 13:30-18:30
+- Jeudi: 09:00-12:30, 13:30-18:30
+- Vendredi: 09:00-12:30, 13:30-18:30
+- Samedi: 09:00-17:00
+- Dimanche: Fermé
 
-**Téléphone**:
-- [+41 22 788 00 22](tel:+41227880022)
+# Des services de déménagement professionnels à Genève
 
-**Adresse**:
-- Route de Pré-Bois 14, 1216 Cointrin
+Chez ERZA Déménagement, nous accompagnons particuliers et professionnels dans toutes les étapes de leur déménagement à Genève et alentours. Du nettoyage au garde-meubles, en passant par le débarras ou les interventions techniques, nous proposons des solutions complètes, sur mesure et clé en main.
 
-**Horaires**:
+## Nos 3 formules de déménagements
 
-| Jour | Horaires |
-|------|----------|
-| Lundi | Fermé |
-| Mardi | 09:00 - 12:30, 13:30 - 18:30 |
-| Mercredi | 09:00 - 12:30, 13:30 - 18:30 |
-...
+### Formule Économique – L'essentiel à prix malin
 
-### Content
-
-[Contenu nettoyé et structuré de la page...]
+Idéal pour les petits budgets ou les clients autonomes...
 
 ---
-*Source: https://example.com/page*
+
+# Nettoyage de logement
+
+URL: https://erza.ch/nos-services/nettoyage/
+
+Un logement impeccable, prêt à être rendu ou habité...
+
+[Contenu de la page suivante...]
 ```
 
 ## Types de Pages Détectés

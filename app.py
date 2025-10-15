@@ -14,7 +14,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 
-app = FastAPI(title="Advanced Crawler Webhook", version="2.0.0")
+app = FastAPI(title="Voice AI Optimized Crawler", version="2.1.0")
 @app.get("/")
 async def root():
     return {"status": "ok"}
@@ -402,6 +402,33 @@ NOISE_HEADINGS = {
     'velomania+', 'pack sérénité', 'bike fitting', 'conseils',
 }
 
+# Navigation/menu phrases to filter out (for voice AI clarity)
+NAVIGATION_PATTERNS = [
+    r'^accueil$',
+    r'^contact$',
+    r'^à propos$',
+    r'^nos services',
+    r'^mentions légales$',
+    r'^plan du site$',
+    r'nos formules de déménagement',
+    r'^nettoyage$',
+    r'^garde-meubles$',
+    r'^débarras$',
+    r'^interventions? diverses?$',
+    r'^\d{3}\.\d{3}\.\d{2}\.\d{2}$',  # Phone numbers as menu items
+    r'^\+41\s*\d{2}\s*\d{3}\s*\d{2}\s*\d{2}$',  # +41 format phones
+    r'^info@',  # Email addresses as menu items
+    r'^rte des jeunes',  # Address fragments
+]
+
+def is_navigation_item(text: str) -> bool:
+    """Check if text is a navigation/menu item."""
+    text_clean = text.lower().strip('- ').strip()
+    for pattern in NAVIGATION_PATTERNS:
+        if re.match(pattern, text_clean, re.IGNORECASE):
+            return True
+    return False
+
 def is_noise_heading(text: str) -> bool:
     """Check if heading is marketing noise."""
     text_clean = text.lower().strip('# ').strip()
@@ -439,25 +466,9 @@ def normalize_heading_hierarchy(lines: List[str]) -> List[str]:
 
 
 def add_heading_anchors(lines: List[str]) -> List[str]:
-    """Add anchor IDs to headings for internal linking."""
-    result = []
-    
-    for line in lines:
-        if line.startswith('#'):
-            level = len(line) - len(line.lstrip('#'))
-            text = line.lstrip('#').strip()
-            
-            # Create anchor slug
-            slug = re.sub(r'[^\w\s-]', '', text.lower())
-            slug = re.sub(r'[-\s]+', '-', slug).strip('-')
-            
-            # Add anchor as HTML comment (markdown compatible)
-            result.append(f'<a id="{slug}"></a>')
-            result.append(line)
-        else:
-            result.append(line)
-    
-    return result
+    """Add anchor IDs to headings for internal linking - DISABLED for voice AI."""
+    # Return lines as-is without anchors for cleaner voice AI output
+    return lines
 
 
 # ============================================================================
@@ -559,6 +570,10 @@ def clean_html_to_markdown(html: str, url: str, max_chars: int) -> Dict[str, Any
         # Skip very short isolated phrases (likely CTAs)
         if name == "p" and len(text) < 25 and not any(c in text for c in '.,;:!?'):
             continue
+        
+        # Skip navigation items for voice AI
+        if is_navigation_item(text):
+            continue
 
         if name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
             level = int(name[1])
@@ -573,7 +588,9 @@ def clean_html_to_markdown(html: str, url: str, max_chars: int) -> Dict[str, Any
                 li_text = li.get_text(" ", strip=True)
                 if li_text:
                     li_text = normalize_text(li_text)
-                    list_items.append(li_text)
+                    # Filter out navigation items for voice AI
+                    if not is_navigation_item(li_text):
+                        list_items.append(li_text)
             
             if list_items:
                 for item in list_items:
@@ -823,159 +840,102 @@ async def crawl(request: CrawlRequest) -> List[PageContent]:
 
 
 def aggregate_markdown(start_url: str, req: CrawlRequest, pages: List[PageContent], user_agent: str) -> str:
-    """Generate enhanced crawl report with statistics, YAML front-matter, and structured data."""
+    """Generate clean, simple output optimized for voice AI reading."""
     
-    # Calculate statistics
-    page_types = Counter(p.page_type for p in pages)
-    languages = Counter(p.lang for p in pages)
+    # Deduplicate pages by content hash
+    seen_hashes = set()
+    unique_pages = []
+    for page in pages:
+        if page.content_hash not in seen_hashes:
+            seen_hashes.add(page.content_hash)
+            unique_pages.append(page)
     
-    # Detect duplicate content
-    content_hashes = [p.content_hash for p in pages]
-    duplicates = len(content_hashes) - len(set(content_hashes))
-    
-    # Count stores, products, etc.
-    store_count = page_types.get('store', 0)
-    product_count = page_types.get('product', 0)
-    category_count = page_types.get('category', 0)
-    
-    # Build report header
-    crawl_timestamp = datetime.utcnow().isoformat() + 'Z'
-    
-    header = [
-        "# Crawl Report",
-        "",
-        f"**Generated**: {crawl_timestamp}",
-        f"**Crawler Version**: 2.0.0",
-        f"**User Agent**: {user_agent}",
-        "",
-        "## Crawl Configuration",
-        "",
-        f"- **Start URL**: {start_url}",
-        f"- **Crawl Depth**: {req.depth}",
-        f"- **Max Pages**: {req.max_pages}",
-        f"- **Same Domain Only**: {'Yes' if req.same_domain else 'No'}",
-        f"- **Timeout**: {req.timeout}s",
-        f"- **Rate Limit**: {req.rate_limit_delay}s",
-        "",
-        "## Crawl Statistics",
-        "",
-        f"- **Total Pages Crawled**: {len(pages)}",
-        f"- **Duplicate Content Blocks**: {duplicates}",
-        "",
-        "**Page Types**:",
-    ]
-    
-    # Add page type breakdown
-    for ptype, count in page_types.most_common():
-        header.append(f"- {ptype.capitalize()}: {count}")
-    
-    header.extend(["", "**Languages Detected**:"])
-    for lang, count in languages.most_common():
-        header.append(f"- {lang.upper()}: {count}")
-    
-    # Add specific counts
-    if store_count > 0:
-        header.append(f"\n**Stores Found**: {store_count}")
-    if product_count > 0:
-        header.append(f"**Products Found**: {product_count}")
-    if category_count > 0:
-        header.append(f"**Categories Found**: {category_count}")
-    
-    header.extend(["", "=" * 80, ""])
-    
-    # Build page sections
+    # Build simple page sections
     sections: List[str] = []
     
-    for i, page in enumerate(pages, start=1):
+    for i, page in enumerate(unique_pages, start=1):
         sec: List[str] = []
-        page_title = page.title or f"Untitled Page {i}"
+        page_title = page.title or f"Page {i}"
         
-        # Page marker
-        sec.append("")
-        sec.append("=" * 80)
-        sec.append(f"PAGE {i}")
-        sec.append("=" * 80)
-        sec.append("")
-        
-        # YAML Front-matter
-        sec.append("```yaml")
-        sec.append("---")
-        sec.append(f"url: {page.url}")
-        if page.canonical_url:
-            sec.append(f"canonical_url: {page.canonical_url}")
-        sec.append(f"crawled_at: {page.crawled_at}")
-        sec.append(f"page_type: {page.page_type}")
-        sec.append(f"lang: {page.lang}")
-        sec.append(f"content_hash: {page.content_hash}")
-        sec.append("---")
-        sec.append("```")
-        sec.append("")
-        
-        # Page title
-        sec.append(f"## {page_title}")
-        sec.append("")
-        
-        # URL with mailto/tel links
-        sec.append(f"**URL**: [{page.url}]({page.url})")
-        sec.append("")
-        
-        # Description
-        if page.description:
-            sec.append(f"**Description**: {page.description}")
+        # Simple separator
+        if i > 1:
+            sec.append("")
+            sec.append("---")
             sec.append("")
         
-        # Contact Information (if present)
+        # Page title as main heading
+        sec.append(f"# {page_title}")
+        sec.append("")
+        
+        # Simple URL
+        sec.append(f"URL: {page.url}")
+        sec.append("")
+        
+        # Description if available
+        if page.description:
+            sec.append(page.description)
+            sec.append("")
+        
+        # Contact Information - SIMPLE FORMAT for voice AI
         if page.contact_info:
             contact = page.contact_info
             
-            if contact.get('emails') or contact.get('phones') or contact.get('addresses'):
-                sec.append("### Contact Information")
-                sec.append("")
-            
             if contact.get('emails'):
-                sec.append("**Email**:")
                 for email in contact['emails']:
-                    sec.append(f"- [{email}](mailto:{email})")
+                    sec.append(f"Email: {email}")
                 sec.append("")
             
             if contact.get('phones'):
-                sec.append("**Téléphone**:")
                 for phone in contact['phones']:
-                    display = phone.get('display', phone.get('e164'))
-                    e164 = phone.get('e164')
-                    sec.append(f"- [{display}](tel:{e164})")
+                    # Use display format, not e164
+                    display = phone.get('display', phone.get('e164', ''))
+                    sec.append(f"Téléphone: {display}")
                 sec.append("")
             
             if contact.get('addresses'):
-                sec.append("**Adresse**:")
                 for addr in contact['addresses']:
-                    sec.append(f"- {addr}")
+                    sec.append(f"Adresse: {addr}")
                 sec.append("")
         
-        # Opening Hours (if present)
+        # Opening Hours - simple text format
         if page.structured_data.get('opening_hours'):
-            hours_table = create_hours_table(page.structured_data['opening_hours'])
-            if hours_table:
-                sec.append(hours_table)
+            hours = page.structured_data['opening_hours']
+            
+            if hours.get('status') == 'winter_closure':
+                sec.append(f"Horaires: {hours.get('note', 'Fermé')}")
                 sec.append("")
+            else:
+                sec.append("Horaires:")
+                day_order = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+                day_names_fr = {
+                    'monday': 'Lundi', 'tuesday': 'Mardi', 'wednesday': 'Mercredi',
+                    'thursday': 'Jeudi', 'friday': 'Vendredi', 'saturday': 'Samedi',
+                    'sunday': 'Dimanche'
+                }
+                
+                for day in day_order:
+                    if day in hours:
+                        day_data = hours[day]
+                        day_name = day_names_fr.get(day, day.capitalize())
+                        
+                        if day_data.get('status') == 'closed':
+                            sec.append(f"- {day_name}: Fermé")
+                        elif day_data.get('status') == 'open' and day_data.get('slots'):
+                            slots_str = ', '.join([f"{s['open']}-{s['close']}" for s in day_data['slots']])
+                            sec.append(f"- {day_name}: {slots_str}")
+                
+        sec.append("")
         
         # Main content
-        sec.append("### Content")
-        sec.append("")
         sec.append(page.markdown)
         sec.append("")
         
-        # Source URL footer
-        sec.append("---")
-        sec.append(f"*Source: {page.url}*")
-        sec.append("")
-        
         sections.append("\n".join(sec))
-    
+
     if not sections:
         sections.append("_No content extracted._")
-    
-    return "\n".join(header + sections)
+
+    return "\n".join(sections)
 
 
 @app.get("/crawl", response_class=PlainTextResponse)
