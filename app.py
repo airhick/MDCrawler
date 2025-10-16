@@ -696,7 +696,7 @@ def clean_html_to_markdown(html: str, url: str, max_chars: int) -> Dict[str, Any
             level = int(name[1])
             # Skip noise headings
             if not is_noise_heading(text):
-                parts.append("#" * level + " " + text)
+            parts.append("#" * level + " " + text)
         elif name == "p":
             parts.append(text)
         elif name in {"ul", "ol"}:
@@ -847,13 +847,18 @@ def is_js_rendered_site(html: str) -> bool:
 async def fetch_html_with_js(url: str, timeout: float, user_agent: str) -> Optional[str]:
     """Fetch HTML using Playwright for JavaScript-rendered sites."""
     if not PLAYWRIGHT_AVAILABLE:
+        print("WARNING: Playwright not available, skipping JS rendering")
         return None
     
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
-                args=['--disable-blink-features=AutomationControlled']
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--no-sandbox',  # Required for Docker/Railway
+                    '--disable-dev-shm-usage'  # Overcome limited resource problems
+                ]
             )
             context = await browser.new_context(
                 user_agent=user_agent,
@@ -1186,34 +1191,46 @@ async def crawl_get(
     sitemap_max_urls: int = Query(100, ge=1, le=5000),
     use_js_rendering: bool = Query(True, description="Enable JavaScript rendering for SPAs"),
 ):
-    req = CrawlRequest(
-        url=url,
-        depth=depth,
-        max_pages=max_pages,
-        same_domain=same_domain,
-        timeout=timeout,
-        max_chars_per_page=max_chars_per_page,
-        rate_limit_delay=rate_limit_delay,
-        use_sitemap=use_sitemap,
-        sitemap_url=sitemap_url,
-        sitemap_max_urls=sitemap_max_urls,
-        use_js_rendering=use_js_rendering,
-    )
+    try:
+        req = CrawlRequest(
+            url=url,
+            depth=depth,
+            max_pages=max_pages,
+            same_domain=same_domain,
+            timeout=timeout,
+            max_chars_per_page=max_chars_per_page,
+            rate_limit_delay=rate_limit_delay,
+            use_sitemap=use_sitemap,
+            sitemap_url=sitemap_url,
+            sitemap_max_urls=sitemap_max_urls,
+            use_js_rendering=use_js_rendering,
+        )
 
-    pages = await crawl(req)
-    user_agent = req.user_agent or DEFAULT_HEADERS["User-Agent"]
-    md = aggregate_markdown(str(url), req, pages, user_agent)
-    return PlainTextResponse(content=md, media_type="text/markdown; charset=utf-8")
+        pages = await crawl(req)
+        user_agent = req.user_agent or DEFAULT_HEADERS["User-Agent"]
+        md = aggregate_markdown(str(url), req, pages, user_agent)
+        return PlainTextResponse(content=md, media_type="text/markdown; charset=utf-8")
+    except Exception as e:
+        import traceback
+        error_msg = f"Crawl error: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        print(error_msg)  # Log to console
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
 @app.post("/crawl", response_class=PlainTextResponse)
 async def crawl_post(payload: CrawlRequest):
-    if payload.depth < 0 or payload.max_pages < 1:
-        raise HTTPException(status_code=400, detail="Invalid crawl parameters")
-    pages = await crawl(payload)
-    user_agent = payload.user_agent or DEFAULT_HEADERS["User-Agent"]
-    md = aggregate_markdown(str(payload.url), payload, pages, user_agent)
-    return PlainTextResponse(content=md, media_type="text/markdown; charset=utf-8")
+    try:
+        if payload.depth < 0 or payload.max_pages < 1:
+            raise HTTPException(status_code=400, detail="Invalid crawl parameters")
+        pages = await crawl(payload)
+        user_agent = payload.user_agent or DEFAULT_HEADERS["User-Agent"]
+        md = aggregate_markdown(str(payload.url), payload, pages, user_agent)
+        return PlainTextResponse(content=md, media_type="text/markdown; charset=utf-8")
+    except Exception as e:
+        import traceback
+        error_msg = f"Crawl error: {str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        print(error_msg)  # Log to console
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
 if __name__ == "__main__":
