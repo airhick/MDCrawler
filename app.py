@@ -1,5 +1,4 @@
 import asyncio
-import re
 import hashlib
 from collections import Counter, deque
 from dataclasses import dataclass, field
