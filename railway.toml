@@ -7,7 +7,7 @@ dockerfilePath = "Dockerfile"
 # startCommand is defined in Dockerfile CMD
 restartPolicyType = "ON_FAILURE"
 healthcheckPath = "/"
-healthcheckTimeout = 120
+healthcheckTimeout = 300
 
 [variables]
 PYTHONDONTWRITEBYTECODE = "1"
