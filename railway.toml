@@ -1,9 +1,10 @@
 [build]
-# Use Nixpacks (default) to build the Python app
-builder = "NIXPACKS"
+# Use Dockerfile to build the Python app with Playwright
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "python app.py"
+# startCommand is defined in Dockerfile CMD
 restartPolicyType = "ON_FAILURE"
 healthcheckPath = "/"
 healthcheckTimeout = 120
