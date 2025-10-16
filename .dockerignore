@@ -27,6 +27,7 @@ DEPLOYMENT_RAILWAY.md
 # Examples and test results
 results nexamples/
 *.txt
+!requirements.txt
 
 # IDE
 .vscode/
