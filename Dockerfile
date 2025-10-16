@@ -47,8 +47,11 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 # Install Playwright browsers (dependencies already installed above)
 RUN python -m playwright install chromium
 
-# Copy application code (force rebuild on change)
-ARG CACHEBUST=1
+# Force cache invalidation by copying build version file
+COPY .build-version ./
+RUN echo "Build version: $(cat .build-version)"
+
+# Copy application code (will always rebuild due to .build-version change)
 COPY app.py ./
 
 # Verify critical files exist
