@@ -13,8 +13,16 @@ from pydantic import BaseModel, HttpUrl
 import httpx
 from bs4 import BeautifulSoup
 
+# Playwright for JS-rendered sites (lazy import)
+try:
+    from playwright.async_api import async_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    async_playwright = None
 
-app = FastAPI(title="Voice AI Optimized Crawler", version="2.1.0")
+
+app = FastAPI(title="Voice AI Optimized Crawler", version="2.1.1")
 @app.get("/")
 async def root():
     return {"status": "ok"}
@@ -43,6 +51,7 @@ class CrawlRequest(BaseModel):
     use_sitemap: bool = False
     sitemap_url: Optional[str] = None
     sitemap_max_urls: int = 100
+    use_js_rendering: bool = True  # Auto-detect and use Playwright for JS sites
 
 
 @dataclass
@@ -404,6 +413,7 @@ NOISE_HEADINGS = {
 
 # Navigation/menu phrases to filter out (for voice AI clarity)
 NAVIGATION_PATTERNS = [
+    # French navigation
     r'^accueil$',
     r'^contact$',
     r'^à propos$',
@@ -415,6 +425,62 @@ NAVIGATION_PATTERNS = [
     r'^garde-meubles$',
     r'^débarras$',
     r'^interventions? diverses?$',
+    
+    # German navigation
+    r'^startseite$',
+    r'^kontakt$',
+    r'^über uns$',
+    r'^unternehmen$',
+    r'^karriere$',
+    r'^jobs$',
+    r'^standorte?$',
+    r'^geschichte$',
+    r'^blog$',
+    r'^referenzen$',
+    r'^medien$',
+    r'^qualität$',
+    r'^nachhaltigkeit$',
+    r'^mobilität$',
+    r'^sicherheit$',
+    r'^technik$',
+    
+    # Generic service categories (often menus)
+    r'^transport$',
+    r'^lagerlogistik$',
+    r'^lagerung$',
+    r'^gesamtlösungen$',
+    r'^national$',
+    r'^international$',
+    r'^stückgut$',
+    r'^pharma$',
+    r'^pakete$',
+    r'^homeservice$',
+    r'^nachtexpress$',
+    r'^spezial$',
+    r'^container$',
+    r'^umzug$',
+    r'^verzollungen$',
+    r'^konfektionierung$',
+    r'^kommissionierung$',
+    r'^cross docking$',
+    r'^e-commerce$',
+    r'^ersatzteillogistik$',
+    r'^eventlogistik$',
+    r'^fitness$',
+    r'^food$',
+    r'^gefahrgut$',
+    r'^outsourcing$',
+    r'^city-logistik$',
+    
+    # Language switchers
+    r'^de$',
+    r'^en$',
+    r'^fr$',
+    r'^it$',
+    r'^ch$',
+    r'^de\s+ch\s+it\s+fr\s+en$',
+    
+    # Contact fragments
     r'^\d{3}\.\d{3}\.\d{2}\.\d{2}$',  # Phone numbers as menu items
     r'^\+41\s*\d{2}\s*\d{3}\s*\d{2}\s*\d{2}$',  # +41 format phones
     r'^info@',  # Email addresses as menu items
@@ -518,6 +584,58 @@ def deduplicate_blocks(lines: List[str], min_block_size: int = 50) -> List[str]:
     return result
 
 
+def remove_consecutive_duplicates(lines: List[str]) -> List[str]:
+    """Remove consecutive duplicate lines."""
+    if not lines:
+        return lines
+    
+    result = [lines[0]]
+    for line in lines[1:]:
+        # Skip if identical to previous line (case-insensitive for better matching)
+        if line.strip().lower() != result[-1].strip().lower():
+            result.append(line)
+    
+    return result
+
+
+def remove_menu_list_blocks(lines: List[str]) -> List[str]:
+    """Remove blocks that are purely navigation menu lists."""
+    result = []
+    i = 0
+    
+    while i < len(lines):
+        line = lines[i]
+        
+        # Check if this starts a potential menu block (list of navigation items)
+        if line.startswith('- '):
+            # Look ahead to see if this is a menu block
+            menu_items = []
+            j = i
+            
+            # Collect consecutive list items
+            while j < len(lines) and lines[j].startswith('- '):
+                item_text = lines[j][2:].strip()
+                menu_items.append(item_text)
+                j += 1
+            
+            # If we have 5+ consecutive navigation items, it's likely a menu block
+            if len(menu_items) >= 5:
+                nav_count = sum(1 for item in menu_items if is_navigation_item(item))
+                # If 70%+ are navigation items, skip the whole block
+                if nav_count / len(menu_items) >= 0.7:
+                    i = j  # Skip to after the menu block
+                    continue
+            
+            # Not a menu block, keep the line
+            result.append(line)
+            i += 1
+        else:
+            result.append(line)
+            i += 1
+    
+    return result
+
+
 def clean_html_to_markdown(html: str, url: str, max_chars: int) -> Dict[str, Any]:
     """Enhanced HTML to Markdown conversion with structured data extraction."""
     soup = BeautifulSoup(html, "html.parser")
@@ -608,9 +726,23 @@ def clean_html_to_markdown(html: str, url: str, max_chars: int) -> Dict[str, Any
     # Apply advanced processing
     lines = content.split('\n')
     lines = normalize_heading_hierarchy(lines)
+    lines = remove_menu_list_blocks(lines)  # Remove navigation menu blocks
     lines = deduplicate_blocks(lines)
+    lines = remove_consecutive_duplicates(lines)  # Remove consecutive identical lines
     lines = add_heading_anchors(lines)
-    content = '\n'.join(lines)
+    
+    # Final cleanup: remove empty lines at start/end of sections
+    cleaned_lines = []
+    for i, line in enumerate(lines):
+        # Skip multiple consecutive empty lines
+        if line.strip() == '':
+            if i == 0 or i == len(lines) - 1:
+                continue
+            if cleaned_lines and cleaned_lines[-1].strip() == '':
+                continue
+        cleaned_lines.append(line)
+    
+    content = '\n'.join(cleaned_lines)
     
     # Extract structured data
     contact_info = extract_contact_info(soup, raw_text)
@@ -671,6 +803,99 @@ async def fetch_text(client: httpx.AsyncClient, url: str, timeout: float) -> Opt
             return None
         return resp.text
     except Exception:
+        return None
+
+
+def is_js_rendered_site(html: str) -> bool:
+    """Detect if a site is JavaScript-rendered (SPA) with minimal content."""
+    soup = BeautifulSoup(html, "html.parser")
+    
+    # Remove script and style tags
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    
+    # Check if body has minimal text content
+    body = soup.find("body")
+    if not body:
+        return True
+    
+    text = body.get_text(strip=True)
+    
+    # If body has very little text (< 100 chars), likely JS-rendered
+    if len(text) < 100:
+        return True
+    
+    # Check for common SPA indicators
+    spa_indicators = [
+        'id="root"',
+        'id="app"',
+        'id="__next"',
+        'data-reactroot',
+        'data-vite-theme',
+        'ng-app',
+        'v-app'
+    ]
+    
+    html_lower = html.lower()
+    if any(indicator.lower() in html_lower for indicator in spa_indicators):
+        # Has SPA indicator, check if there's actual content
+        if len(text) < 500:  # Very little rendered content
+            return True
+    
+    return False
+
+
+async def fetch_html_with_js(url: str, timeout: float, user_agent: str) -> Optional[str]:
+    """Fetch HTML using Playwright for JavaScript-rendered sites."""
+    if not PLAYWRIGHT_AVAILABLE:
+        return None
+    
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=['--disable-blink-features=AutomationControlled']
+            )
+            context = await browser.new_context(
+                user_agent=user_agent,
+                viewport={'width': 1920, 'height': 1080},
+                ignore_https_errors=True
+            )
+            page = await context.new_page()
+            
+            # Try different loading strategies
+            try:
+                # First try: wait for DOM content loaded (faster, more reliable for SPAs)
+                await page.goto(url, wait_until='domcontentloaded', timeout=timeout * 1000)
+            except Exception:
+                # Fallback: just navigate without waiting
+                await page.goto(url, wait_until='commit', timeout=timeout * 1000)
+            
+            # Wait for content to render (dynamic wait)
+            try:
+                # Wait for body to have some content
+                await page.wait_for_function(
+                    "document.body && document.body.innerText.length > 100",
+                    timeout=5000
+                )
+            except Exception:
+                # If that fails, just wait a fixed time
+                await page.wait_for_timeout(3000)
+            
+            # Scroll to trigger lazy loading
+            try:
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.wait_for_timeout(1000)
+            except Exception:
+                pass
+            
+            # Get the rendered HTML
+            html = await page.content()
+            
+            await browser.close()
+            return html
+    except Exception as e:
+        print(f"Playwright error for {url}: {e}")
         return None
 
 
@@ -804,7 +1029,17 @@ async def crawl(request: CrawlRequest) -> List[PageContent]:
             if any(p.search(current_url) for p in exclude_patterns):
                 continue
 
+            # Try static HTML first (fast)
             html = await fetch_html(client, current_url, request.timeout)
+            
+            # Check if JS rendering is needed
+            if html and request.use_js_rendering and is_js_rendered_site(html):
+                # Retry with Playwright for JS-rendered content
+                user_agent = request.user_agent or DEFAULT_HEADERS["User-Agent"]
+                html_js = await fetch_html_with_js(current_url, request.timeout, user_agent)
+                if html_js:
+                    html = html_js
+            
             if not html:
                 continue
 
@@ -950,6 +1185,7 @@ async def crawl_get(
     use_sitemap: bool = Query(False),
     sitemap_url: Optional[str] = Query(None),
     sitemap_max_urls: int = Query(100, ge=1, le=5000),
+    use_js_rendering: bool = Query(True, description="Enable JavaScript rendering for SPAs"),
 ):
     req = CrawlRequest(
         url=url,
@@ -962,6 +1198,7 @@ async def crawl_get(
         use_sitemap=use_sitemap,
         sitemap_url=sitemap_url,
         sitemap_max_urls=sitemap_max_urls,
+        use_js_rendering=use_js_rendering,
     )
 
     pages = await crawl(req)

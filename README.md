@@ -6,6 +6,22 @@ Service FastAPI exposant un webhook `/crawl` qui prend une URL, explore en large
 
 **Conçu pour les agents vocaux** qui lisent le contenu à haute voix et l'utilisent comme contexte pour comprendre une entreprise.
 
+### 🎭 **NEW: JavaScript Rendering Support**
+- ✅ Crawls modern **React, Vue, Angular, Next.js** sites
+- ✅ Auto-detects SPAs and uses **Playwright** (headless browser)
+- ✅ Hybrid approach: fast httpx for static sites, browser for JS sites
+- ✅ No configuration needed - works automatically
+
+Tested on: eratos.ch (React), and other modern SPAs ✅
+
+### 🧹 **NEW: Advanced Anti-Redundancy** (v2.1.1)
+- ✅ **Detects and removes** navigation menu blocks (50+ patterns)
+- ✅ **Eliminates** consecutive duplicate lines
+- ✅ **Filters** language switchers (DE, FR, IT, EN)
+- ✅ **Result**: 90%+ reduction in redundant content
+
+Example: planzer.ch - from 11,613 lines → ~800 lines ✅
+
 ### Optimisations Voice AI
 
 **✅ Supprimé (bruit pour la voix)**:
@@ -56,7 +72,12 @@ Service FastAPI exposant un webhook `/crawl` qui prend une URL, explore en large
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+
+# Install Playwright browsers (for JS rendering)
+python -m playwright install chromium
 ```
+
+**Note**: Playwright browsers (~300MB) sont requis pour crawler les sites JavaScript modernes (React, Vue, etc.). Pour sites statiques uniquement, vous pouvez sauter cette étape et mettre `use_js_rendering=false`.
 
 ## Lancement
 
@@ -144,6 +165,7 @@ Réponse: `text/markdown`.
 - `use_sitemap` (bool): activer la découverte via sitemap.
 - `sitemap_url` (str|null): URL sitemap explicite (sinon robots.txt + /sitemap.xml).
 - `sitemap_max_urls` (int): limite d'URLs importées depuis les sitemaps.
+- `use_js_rendering` (bool): activer le rendu JavaScript pour les SPAs (défaut: true).
 
 ## Format de Sortie Voice AI
 
