@@ -42,8 +42,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Install Playwright browsers
-RUN python -m playwright install chromium --with-deps
+# Install Playwright browsers (dependencies already installed above)
+RUN python -m playwright install chromium
 
 COPY app.py ./
 
