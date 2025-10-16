@@ -1,10 +1,12 @@
 FROM python:3.11-slim
 
+# Force rebuild - v2.1.1 with Docker fixes
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8080 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    CRAWLER_VERSION=2.1.1
 
 WORKDIR /app
 
@@ -45,9 +47,15 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 # Install Playwright browsers (dependencies already installed above)
 RUN python -m playwright install chromium
 
+# Copy application code (force rebuild on change)
+ARG CACHEBUST=1
 COPY app.py ./
+
+# Verify critical files exist
+RUN ls -la app.py requirements.txt && \
+    python -c "import app; print('✓ app.py loads successfully')"
 
 EXPOSE 8080
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "info"]
 
