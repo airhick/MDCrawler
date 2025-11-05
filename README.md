@@ -85,20 +85,6 @@ python -m playwright install chromium
 uvicorn app:app --host 0.0.0.0 --port 8080
 ```
 
-### Docker (déploiement ou exécution serveur)
-
-Build et run en exposant le port publiquement:
-
-```bash
-docker build -t crawler-webhook \
-  -f "/Users/Eric.AELLEN/Documents/A - projets pro/crawler/1.0/Dockerfile" \
-  "/Users/Eric.AELLEN/Documents/A - projets pro/crawler/1.0"
-
-docker run --rm -p 8080:8080 --name crawler-webhook crawler-webhook
-```
-
-Vous pouvez ensuite appeler `http://<ip_serveur>:8080/crawl` depuis l'extérieur.
-
 ### Render (hébergement managé)
 
 1. Poussez ce dossier dans un repo Git (GitHub/GitLab).
@@ -106,13 +92,7 @@ Vous pouvez ensuite appeler `http://<ip_serveur>:8080/crawl` depuis l'extérieur
 3. Render détectera `render.yaml` et provisionnera automatiquement.
 4. Une URL publique sera fournie, ex: `https://simple-crawler-webhook.onrender.com/crawl`.
 
-### Railway (hébergement managé)
-
-1. Installez l'outil CLI Railway: `npm i -g @railway/cli`.
-2. Depuis ce dossier: `railway init` (ou `railway up` pour créer le service).
-3. Railway détectera `railway.toml`. Aucune config additionnelle requise.
-4. Le service démarre avec: `uvicorn app:app --host 0.0.0.0 --port $PORT`.
-5. Une URL publique sera fournie, ex: `https://<projet>-up.railway.app/crawl`.
+**Note**: Le build inclut automatiquement l'installation de Playwright Chromium pour le rendu JavaScript.
 
 ## Utilisation
 
