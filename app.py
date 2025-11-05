@@ -697,7 +697,7 @@ def clean_html_to_markdown(html: str, url: str, max_chars: int) -> Dict[str, Any
             level = int(name[1])
             # Skip noise headings
             if not is_noise_heading(text):
-            parts.append("#" * level + " " + text)
+                parts.append("#" * level + " " + text)
         elif name == "p":
             parts.append(text)
         elif name in {"ul", "ol"}:
