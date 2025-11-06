@@ -52,6 +52,7 @@ class CrawlRequest(BaseModel):
     sitemap_url: Optional[str] = None
     sitemap_max_urls: int = 100
     use_js_rendering: bool = True  # Auto-detect and use Playwright for JS sites
+    max_concurrent: int = 10  # Maximum concurrent requests for parallel crawling
 
 
 @dataclass
@@ -1001,10 +1002,84 @@ async def crawl(request: CrawlRequest) -> List[PageContent]:
     visited: Set[str] = set()
     seeds: List[str] = [start_url]
     results: List[PageContent] = []
+    
+    # Semaphore to limit concurrent requests
+    semaphore = asyncio.Semaphore(request.max_concurrent)
+    # Lock for thread-safe visited set operations
+    visited_lock = asyncio.Lock()
+    user_agent = request.user_agent or DEFAULT_HEADERS["User-Agent"]
 
-    async with httpx.AsyncClient(headers=headers) as client:
+    async def process_page(
+        client: httpx.AsyncClient,
+        url: str,
+        depth: int,
+        visited_set: Set[str],
+        results_list: List[PageContent],
+        queue: Deque[Tuple[str, int]],
+    ) -> Optional[PageContent]:
+        """Process a single page - can be called in parallel."""
+        async with semaphore:
+            # Check and mark as visited atomically
+            async with visited_lock:
+                if url in visited_set:
+                    return None
+                visited_set.add(url)
+            
+            # Validate URL
+            if request.same_domain and not same_registered_domain(start_url, url):
+                return None
+            
+            if any(p.search(url) for p in exclude_patterns):
+                return None
+            
+            # Try static HTML first (fast)
+            html = await fetch_html(client, url, request.timeout)
+            
+            # Check if JS rendering is needed
+            if html and request.use_js_rendering and is_js_rendered_site(html):
+                # Retry with Playwright for JS-rendered content
+                html_js = await fetch_html_with_js(url, request.timeout, user_agent)
+                if html_js:
+                    html = html_js
+            
+            if not html:
+                return None
+
+            # Extract enhanced data (CPU-bound, but fast)
+            page_data = clean_html_to_markdown(html, url, request.max_chars_per_page)
+            
+            # Create PageContent with all metadata
+            page_content = PageContent(
+                url=url,
+                title=page_data['title'],
+                description=page_data['description'],
+                markdown=page_data['markdown'],
+                crawled_at=datetime.utcnow().isoformat() + 'Z',
+                page_type=page_data['page_type'],
+                lang=page_data['lang'],
+                canonical_url=page_data.get('canonical_url'),
+                contact_info=page_data.get('contact_info', {}),
+                structured_data=page_data.get('structured_data', {}),
+                content_hash=page_data.get('content_hash', ''),
+            )
+            
+            # Add links to queue for next depth level (thread-safe)
+            if depth < request.depth:
+                links = extract_links(html, url)
+                async with visited_lock:
+                    for link in links:
+                        if link not in visited_set:
+                            queue.append((link, depth + 1))
+            
+            # Rate limiting delay
+            if request.rate_limit_delay > 0:
+                await asyncio.sleep(request.rate_limit_delay)
+            
+            return page_content
+
+    async with httpx.AsyncClient(headers=headers, limits=httpx.Limits(max_connections=request.max_concurrent * 2, max_keepalive_connections=request.max_concurrent)) as client:
         # Optional sitemap discovery to broaden initial queue
-        if request.use_sitemap and len(results) < request.max_pages:
+        if request.use_sitemap:
             try:
                 sitemap_urls = await discover_sitemap_urls(
                     client=client,
@@ -1022,59 +1097,34 @@ async def crawl(request: CrawlRequest) -> List[PageContent]:
                 pass
 
         queue: Deque[Tuple[str, int]] = deque((u, 0) for u in seeds)
+        
+        # Process pages in parallel batches
         while queue and len(results) < request.max_pages:
-            current_url, depth = queue.popleft()
-            if current_url in visited:
-                continue
-            visited.add(current_url)
-
-            if request.same_domain and not same_registered_domain(start_url, current_url):
-                continue
-
-            if any(p.search(current_url) for p in exclude_patterns):
-                continue
-
-            # Try static HTML first (fast)
-            html = await fetch_html(client, current_url, request.timeout)
+            # Collect a batch of URLs to process in parallel
+            batch: List[Tuple[str, int]] = []
+            while queue and len(batch) < request.max_concurrent and len(results) + len(batch) < request.max_pages:
+                url, depth = queue.popleft()
+                if url not in visited:
+                    batch.append((url, depth))
             
-            # Check if JS rendering is needed
-            if html and request.use_js_rendering and is_js_rendered_site(html):
-                # Retry with Playwright for JS-rendered content
-                user_agent = request.user_agent or DEFAULT_HEADERS["User-Agent"]
-                html_js = await fetch_html_with_js(current_url, request.timeout, user_agent)
-                if html_js:
-                    html = html_js
+            if not batch:
+                break
             
-            if not html:
-                continue
-
-            # Extract enhanced data
-            page_data = clean_html_to_markdown(html, current_url, request.max_chars_per_page)
+            # Process batch in parallel
+            tasks = [
+                process_page(client, url, depth, visited, results, queue)
+                for url, depth in batch
+            ]
             
-            # Create PageContent with all metadata
-            page_content = PageContent(
-                url=current_url,
-                title=page_data['title'],
-                description=page_data['description'],
-                markdown=page_data['markdown'],
-                crawled_at=datetime.utcnow().isoformat() + 'Z',
-                page_type=page_data['page_type'],
-                lang=page_data['lang'],
-                canonical_url=page_data.get('canonical_url'),
-                contact_info=page_data.get('contact_info', {}),
-                structured_data=page_data.get('structured_data', {}),
-                content_hash=page_data.get('content_hash', ''),
-            )
+            batch_results = await asyncio.gather(*tasks, return_exceptions=True)
             
-            results.append(page_content)
-
-            if depth < request.depth:
-                for link in extract_links(html, current_url):
-                    if link not in visited:
-                        queue.append((link, depth + 1))
-
-            if request.rate_limit_delay > 0:
-                await asyncio.sleep(request.rate_limit_delay)
+            # Collect successful results
+            for result in batch_results:
+                if isinstance(result, PageContent):
+                    results.append(result)
+                elif isinstance(result, Exception):
+                    # Log but continue
+                    print(f"Error processing page: {result}")
 
     return results
 
@@ -1191,6 +1241,7 @@ async def crawl_get(
     sitemap_url: Optional[str] = Query(None),
     sitemap_max_urls: int = Query(100, ge=1, le=5000),
     use_js_rendering: bool = Query(True, description="Enable JavaScript rendering for SPAs"),
+    max_concurrent: int = Query(10, ge=1, le=50, description="Maximum concurrent requests for parallel crawling"),
 ):
     try:
         req = CrawlRequest(
@@ -1205,6 +1256,7 @@ async def crawl_get(
             sitemap_url=sitemap_url,
             sitemap_max_urls=sitemap_max_urls,
             use_js_rendering=use_js_rendering,
+            max_concurrent=max_concurrent,
         )
 
         pages = await crawl(req)
